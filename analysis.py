@@ -348,19 +348,27 @@ class ExtendedAnalysis:
         results = []
         
         for i, geom in enumerate(self.geoms_loader.xyz):
-            # Extract ring coordinates for this geometry
+            # Extract ring coordinates for this geometry (0-indexed)
             ring_coords = geom[ring_atom_indices]
             
             # Create RingParams object and calculate puckering parameters
+            # RingParams expects 1-indexed atoms!
+            ring_atom_indices_1indexed = [idx + 1 for idx in ring_atom_indices]
             ring_params = umd.RingParams(
-                ring_atom_ind=ring_atom_indices,
+                ring_atom_ind=ring_atom_indices_1indexed,
                 ring_coords=ring_coords
             )
             
-            # Get puckering coordinates (returns array [q, theta, phi])
+            # Get puckering coordinates
+            # For 6-membered rings: returns [q2, q3, phi2, phi3]
+            # Need to convert to polar coords: Q, theta, phi
             try:
                 pucker = ring_params.get_pucker_coords(ring_coords)
-                q_val, theta_val, phi_val = pucker[0], pucker[1], pucker[2]
+                # Convert to polar coordinates using ulamdyn's method
+                polar = ring_params._cp_to_polar(pucker.reshape(1, -1))
+                q_val = polar['Q'][0]
+                theta_val = polar['theta'][0] * np.pi / 180  # Convert to radians
+                phi_val = polar['phi'][0]
             except Exception as e:
                 q_val, theta_val, phi_val = None, None, None
             

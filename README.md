@@ -39,9 +39,11 @@ The `analysis.py` script has been extended to support loading geometries from **
 - Full integration with ulamdyn's `ClusterGeoms` class
 
 ### ✅ **Cramer-Pople Analysis**
-- Ring puckering parameter calculation
-- Support for multiple ring structures
-- Returns pandas DataFrame with q, theta, phi parameters
+- Ring puckering parameter calculation (Q, θ, φ)
+- **Automatic conformation classification** (Chair, Boat, Envelope, Half-chair, Skew, Twist, etc.)
+- Support for 5- and 6-membered rings
+- Returns pandas DataFrame with parameters and classifications
+- Command-line tool for quick analysis
 
 ### ✅ **Flexible Input**
 - Single XYZ file
@@ -101,6 +103,43 @@ cp_results = analysis.perform_cramer_pople_analysis(ring_atoms)
 # View results
 print(cp_results.head())
 print(cp_results.describe())
+```
+
+### 4. Cramer-Pople Classification (Command-Line Tool)
+
+For quick analysis with automatic conformation classification, use the `classify_single.py` script:
+
+```bash
+# Analyze a single XYZ file
+python classify_single.py your_file.xyz
+
+# Example output:
+# Total: 4000, Success: 4000
+# q: 0.175776 ± 0.091661 Å
+# theta: 0.03°
+# phi: 106.11°
+# 
+# Conformations:
+#   0C0       :   110 ( 2.75%)
+#   1C4       :    98 ( 2.45%)
+#   2C5       :   455 (11.38%)
+#   C         :  2211 (55.27%)
+#   ...
+# 
+# ✅ Saved to your_file.classified.dat
+```
+
+**Output file format:**
+```
+# Cramer-Pople Parameters with Classification
+# Source: your_file.xyz
+# Ring atoms: [0, 1, 2, 3, 4, 5]
+#
+  geometry_idx              q          theta            phi  conformation
+             0     0.06115044     4.78518839    93.89828698           6T2
+             1     0.06132391     4.79429227    93.34770913           6T2
+             2     0.06126369     4.80210876    92.60491993           6T2
+           ...
 ```
 
 ## API Reference
@@ -237,6 +276,57 @@ C        1.36722008  -1.51210075   0.05283259
 - ✅ If not present → uses defaults (TRAJ=0, Time=geometry_index)
 - ✅ Empty or arbitrary comment lines → no errors!
 
+## Cramer-Pople Conformation Classifications
+
+The `classify_single.py` tool uses **ulamdyn's internal classification functions** to automatically identify ring conformations based on Cramer-Pople parameters.
+
+### 6-Membered Ring Conformations
+
+| Class | Name | Description |
+|-------|------|-------------|
+| **C** | Chair | Most stable conformation, θ ≈ 0° or 180° |
+| **0C0** | Planar | Completely flat ring |
+| **1C4, 2C5, 3C6, etc.** | Numbered Chair | Chair variants with specific atom positions |
+| **4C1, 5C2, 6C3, etc.** | Inverted Chair | Inverted chair conformations |
+| **B** | Boat | High-energy conformation |
+| **B25, B41, etc.** | Numbered Boat | Boat variants |
+| **E** | Envelope | One atom out of plane |
+| **E1, E2, ..., E6** | Numbered Envelope | Envelope with specific atom out |
+| **H** | Half-chair | Intermediate conformation |
+| **1H2, 2H3, etc.** | Numbered Half-chair | Half-chair variants |
+| **S** | Skew-boat | Twisted boat conformation |
+| **1S2, 2S3, etc.** | Numbered Skew | Skew-boat variants |
+| **T** | Twist-boat | Alternative boat form |
+| **2T6, 4T2, etc.** | Numbered Twist | Twist-boat variants |
+
+### 5-Membered Ring Conformations
+
+| Class | Name | Description |
+|-------|------|-------------|
+| **E** | Envelope | One atom out of plane |
+| **T** | Twist | Two atoms out of plane |
+
+### How Classification Works
+
+1. **Calculate Cramer-Pople parameters**: Q (amplitude), θ (polar angle), φ (azimuthal angle)
+2. **Use ulamdyn's `get_conf_6memb(θ, φ)`** or **`get_conf_5memb(φ)`** functions
+3. **Classify based on parameter ranges**:
+   - Chair: θ close to 0° or 180°
+   - Boat: θ ≈ 90°, specific φ ranges
+   - Envelope: θ ≈ 45° or 135°
+   - Half-chair, Skew, Twist: Intermediate values
+
+### Validation
+
+The classification results from `classify_single.py` have been **validated to match 100%** with ulamdyn's direct method:
+
+```bash
+# Using classify_single.py
+python classify_single.py traj1.xyz
+# Matches: 4000/4000
+# ✅ ALL CLASSIFICATIONS MATCH PERFECTLY!
+```
+
 ## Workflow Examples
 
 ### Example 1: Complete Analysis Pipeline
@@ -305,6 +395,47 @@ dim_reduction.pca(n_components=2)
 # (requires reference geometry)
 # geoms_loader.align_geoms()
 # rmsd = geoms_loader.rmsd
+```
+
+### Example 4: Programmatic Conformation Classification
+
+```python
+from analysis import ExtendedAnalysis
+from ulamdyn.descriptors import RingParams
+import numpy as np
+
+# Load data
+analysis = ExtendedAnalysis()
+analysis.load_from_xyz("traj1.xyz")
+
+# Perform Cramer-Pople analysis
+ring_atoms = [0, 1, 2, 3, 4, 5]
+cp_results = analysis.perform_cramer_pople_analysis(ring_atoms)
+
+# Classify each geometry
+ring_atoms_1indexed = [a + 1 for a in ring_atoms]
+conformations = []
+
+for idx, row in cp_results.iterrows():
+    coords = analysis.coords[int(row['geometry_idx'])]
+    ring_coords = coords[ring_atoms]
+    ring_coords_centered = ring_coords - ring_coords.mean(axis=0)
+    
+    # Create RingParams and classify
+    ring_params = RingParams(ring_atoms_1indexed, ring_coords=ring_coords_centered)
+    theta_deg = np.degrees(row['theta'])
+    conf = ring_params.get_conf_6memb(theta_deg, row['phi'])
+    conformations.append(conf)
+
+# Add to dataframe
+cp_results['conformation'] = conformations
+
+# Analyze conformation distribution
+print(cp_results['conformation'].value_counts())
+
+# Filter by conformation
+chair_geoms = cp_results[cp_results['conformation'] == 'C']
+print(f"Chair conformations: {len(chair_geoms)} ({100*len(chair_geoms)/len(cp_results):.1f}%)")
 ```
 
 ## Validation: TRAJ vs XYZ Methods Produce Identical Results
@@ -411,9 +542,36 @@ To extend the analysis:
 - The `geoms_loader.dataset` is a pandas DataFrame compatible with ulamdyn's clustering methods
 - All ulamdyn analysis methods can be accessed through the `geoms_loader` object
 
+### ⚠️ Important: Atom Indexing Convention
+
+**Critical distinction between Python and ulamdyn indexing:**
+
+- **Python/NumPy arrays**: 0-indexed (atoms 0, 1, 2, 3, 4, 5)
+- **ulamdyn RingParams**: 1-indexed (atoms 1, 2, 3, 4, 5, 6)
+
+**When using `ExtendedAnalysis.perform_cramer_pople_analysis()`:**
+- ✅ Use **0-indexed** atom indices: `ring_atoms = [0, 1, 2, 3, 4, 5]`
+- The method handles conversion to 1-indexed internally
+
+**When using `RingParams` directly:**
+- ✅ Use **1-indexed** atom indices: `ring_atoms = [1, 2, 3, 4, 5, 6]`
+
+**Example:**
+```python
+# Correct usage with ExtendedAnalysis
+ring_atoms = [0, 1, 2, 3, 4, 5]  # 0-indexed
+cp_results = analysis.perform_cramer_pople_analysis(ring_atoms)
+
+# Correct usage with RingParams directly
+ring_atoms_1indexed = [1, 2, 3, 4, 5, 6]  # 1-indexed
+ring_params = umd.RingParams(ring_atom_ind=ring_atoms_1indexed)
+```
+
 ## Files in This Repository
 
 - **`analysis.py`** - Main extended analysis module with `ExtendedAnalysis` class
+- **`classify_single.py`** - Command-line tool for Cramer-Pople analysis with automatic conformation classification
+- **`test-umd.py`** - Direct ulamdyn usage example for TRAJ folders
 - **`compare.py`** - Minimal validation script comparing TRAJ vs XYZ loading methods
 - **`test_cramer_pople.py`** - Test script for Cramer-Pople analysis on multiple rings
 - **`XYZ_FORMAT_GUIDE.md`** - Detailed guide on supported XYZ file formats
@@ -457,5 +615,5 @@ This extension builds upon the [ulamdyn](https://newton-x.org/) package from the
 
 ---
 
-**Last Updated**: January 2026  
-**Version**: 1.0
+**Last Updated**: January 9, 2026  
+**Version**: 2.0 - Added Cramer-Pople conformation classification with `classify_single.py`

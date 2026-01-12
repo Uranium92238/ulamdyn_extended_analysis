@@ -63,5 +63,15 @@ with open(output_file, 'w') as f:
     f.write(f'  geometry_idx              q          theta            phi  conformation\n')
     for _, row in cp_results.iterrows():
         f.write(f'{int(row["geometry_idx"]):14d}  {row["q"]:13.8f}  {row["theta"]:13.8f}  {row["phi"]:13.8f}  {row["conformation"]:>12s}\n')
+    
+    # Add summary statistics
+    f.write(f'\n# Summary Statistics\n')
+    f.write(f'# Total geometries: {len(cp_results)}\n')
+    f.write(f'# Successfully classified: {len(valid)}\n')
+    f.write(f'#\n')
+    f.write(f'# Conformation Counts and Percentages:\n')
+    for conf, count in valid['conformation'].value_counts().items():
+        percentage = 100 * count / len(valid)
+        f.write(f'#   {conf:10s}: {count:5d} ({percentage:5.2f}%)\n')
 
 print(f'\n✅ Saved to {output_file}')
